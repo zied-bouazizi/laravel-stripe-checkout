@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Order;
 use App\Models\Product;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class ProductController extends Controller
 {
@@ -39,7 +40,7 @@ class ProductController extends Controller
         $session = \Stripe\Checkout\Session::create([
             'line_items' => $lineItems,
             'mode' => 'payment',
-            'success_url' => route('checkout.success', [], true),
+            'success_url' => route('checkout.success', [], true) . "?session_id={CHECKOUT_SESSION_ID}",
             'cancel_url' => route('checkout.cancel', [], true),
         ]);
 
@@ -52,9 +53,30 @@ class ProductController extends Controller
         return redirect($session->url);
     }
 
-    public function success()
+    public function success(Request $request)
     {
-        return view('product.checkout_success');
+        \Stripe\Stripe::setApiKey(env('STRIPE_SECRET_KEY'));
+        $sessionId = $request->get('session_id');
+
+        try {
+            $session = \Stripe\Checkout\Session::retrieve($sessionId);
+            if (!$session) {
+                throw new NotFoundHttpException;
+            }
+
+            $order = Order::where('session_id', $session->id)->first();
+            if (!$order) {
+                throw new NotFoundHttpException();
+            }
+            if ($order->status === 'unpaid') {
+                $order->status = 'paid';
+                $order->save();
+            }
+
+            return view('product.checkout_success');
+        } catch (\Exception $e) {
+            throw new NotFoundHttpException();
+        }
     }
 
     public function cancel()
